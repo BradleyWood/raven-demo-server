@@ -57,6 +57,20 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 	session.Save(request, writer)
 }
 
+// initialize the interactive interpreter
+func initUser() (User, error) {
+	cmd := exec.Command("java", "-jar", "raven.jar")
+	in, _ := cmd.StdoutPipe()
+	out, _ := cmd.StdinPipe()
+	err := cmd.Start()
+
+	if err != nil {
+		return User{}, err
+	}
+
+	return User{process: cmd, out: out, in: in}, nil
+}
+
 type User struct {
 	process *exec.Cmd
 	out     io.WriteCloser
