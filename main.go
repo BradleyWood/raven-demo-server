@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"log"
 	"time"
+	"os/exec"
 	"net/http"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
@@ -53,4 +55,25 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 	session, _ := store.Get(request, "cookie-name")
 
 	session.Save(request, writer)
+}
+
+type User struct {
+	process *exec.Cmd
+	out     io.WriteCloser
+	in      io.ReadCloser
+}
+
+type Line struct {
+	Line string `json:"line"`
+}
+
+type Result struct {
+	Status int    `json:"status"`
+	Result string `json:"result"`
+}
+
+type Program struct {
+	Src   string   `json:"src"`
+	Args  []string `json:"args"`
+	Input string   `json:"stdin"`
 }
