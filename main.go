@@ -19,6 +19,11 @@ func main() {
 	r.HandleFunc("/reset", ResetIaHandler).Methods("POST")
 	r.HandleFunc("/program", ExecProgramHandler).Methods("POST")
 
+	store.Options = &sessions.Options{
+		MaxAge:   60 * 60,
+		HttpOnly: true,
+	}
+
 	srv := &http.Server{
 		Handler:      r,
 		Addr:         "127.0.0.1:8000",
