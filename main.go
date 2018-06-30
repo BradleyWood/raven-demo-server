@@ -191,8 +191,9 @@ func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
 
 	if err == nil {
 		output := readString(user.in)
+		errorOutput := readString(user.err)
 
-		response := Result{Stdout: output}
+		response := Result{Stdout: output, Stderr: errorOutput}
 		bytes, err := json.Marshal(response)
 
 		if err != nil {
@@ -274,6 +275,7 @@ func initUser() (User, error) {
 	cmd := exec.Command("java", "-jar", "raven.jar")
 	in, _ := cmd.StdoutPipe()
 	out, _ := cmd.StdinPipe()
+	errPipe, _ := cmd.StderrPipe()
 	err := cmd.Start()
 
 	if err != nil {
@@ -281,8 +283,9 @@ func initUser() (User, error) {
 	}
 
 	nbReader := nbreader.NewNBReader(in, 2048, nbreader.Timeout(time.Millisecond*250))
+	nbErrorReader := nbreader.NewNBReader(errPipe, 2048, nbreader.Timeout(time.Millisecond*50))
 
-	return User{process: cmd, start: time.Now(), out: out, in: nbReader}, nil
+	return User{process: cmd, start: time.Now(), out: out, in: nbReader, err: nbErrorReader}, nil
 }
 
 type User struct {
@@ -290,6 +293,7 @@ type User struct {
 	start   time.Time
 	out     io.Writer
 	in      io.Reader
+	err     io.Reader
 }
 
 type Line struct {
