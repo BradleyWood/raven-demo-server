@@ -49,6 +49,13 @@ func main() {
 	}
 
 	log.Fatal(srv.ListenAndServe())
+
+	for k, v := range users {
+		if time.Since(v.start).Hours() >= 1 {
+			v.process.Process.Kill()
+			delete(users, k)
+		}
+	}
 }
 
 func HandleOptions(writer http.ResponseWriter, _ *http.Request) {
@@ -163,11 +170,12 @@ func initUser() (User, error) {
 
 	nbReader := nbreader.NewNBReader(in, 2048, nbreader.ChunkTimeout(time.Millisecond*250))
 
-	return User{process: cmd, out: out, in: nbReader}, nil
+	return User{process: cmd, start: time.Now(), out: out, in: nbReader}, nil
 }
 
 type User struct {
 	process *exec.Cmd
+	start   time.Time
 	out     io.Writer
 	in      io.Reader
 }
