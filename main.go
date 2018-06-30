@@ -2,8 +2,9 @@ package main
 
 import (
 	"io"
+	"os"
 	"log"
-	"fmt"
+	"path"
 	"time"
 	"errors"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
+	"github.com/tink-ab/tempfile"
 	"github.com/svent/go-nbreader"
 	"github.com/gorilla/securecookie"
 )
@@ -20,8 +22,15 @@ import (
 var (
 	counter = 0
 	users   = make(map[int]User)
-	host    = "http://bradleywood.me"
 	store   = sessions.NewCookieStore(securecookie.GenerateRandomKey(16))
+)
+
+const (
+	StatusOk          = 0
+	StatusTimeout     = 1
+	StatusBufOverflow = 2
+	host              = "http://bradleywood.me"
+	timeout           = time.Second * 20
 )
 
 func main() {
@@ -41,6 +50,9 @@ func main() {
 		HttpOnly: true,
 	}
 
+	tmpDir := path.Join(os.TempDir(), "raven")
+	os.Mkdir(tmpDir, os.ModePerm)
+
 	srv := &http.Server{
 		Handler:      r,
 		Addr:         "127.0.0.1:3000",
@@ -56,6 +68,8 @@ func main() {
 			delete(users, k)
 		}
 	}
+
+	os.RemoveAll(tmpDir)
 }
 
 func HandleOptions(writer http.ResponseWriter, _ *http.Request) {
@@ -135,18 +149,48 @@ func IaHandler(writer http.ResponseWriter, request *http.Request) {
 func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer)
 
+	fp, err := tempfile.TempFile(path.Join(os.TempDir(), "raven"), "raven_demo_", ".rvn")
+
+	if err != nil {
+		panic(err)
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	} else {
+		body, err := ioutil.ReadAll(request.Body)
+
+		if err == nil {
+			program := Program{}
+			err := json.Unmarshal(body, &program)
+			if err != nil {
+				panic(err)
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+			} else {
+				fp.Write([]byte(program.Src))
+				fp.Close()
+
+				result := execProgram(fp.Name(), program)
+
+				output, err := json.Marshal(result)
+
+				if err != nil {
+					http.Error(writer, err.Error(), http.StatusInternalServerError)
+				} else {
+					writer.Write(output)
+				}
+			}
+		}
+	}
+	os.Remove(fp.Name())
 }
 
 // report output from the terminal
 func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer)
-	s, user, err := getUser(writer, request)
+	_, user, err := getUser(writer, request)
 
 	if err == nil {
 		output := readString(user.in)
 
-		response := Result{Result: output}
-		fmt.Println("Update", output, s.Values["userId"])
+		response := Result{Stdout: output}
 		bytes, err := json.Marshal(response)
 
 		if err != nil {
@@ -164,6 +208,56 @@ func readString(reader io.Reader) string {
 	return string(bytes[:n])
 }
 
+func execProgram(path string, program Program) Result {
+	cmd := exec.Command("java", "-jar", "raven.jar", path)
+	status := StatusOk
+	bufSize := 4096
+
+	errPipe, _ := cmd.StderrPipe()
+	in, _ := cmd.StdoutPipe()
+
+	cmd.Start()
+
+	buf := make([]byte, bufSize)
+	bLen := 0
+
+	errBuf := make([]byte, bufSize)
+	errLen := 0
+
+	ch := make(chan error)
+
+	reader := func(reader io.Reader, buf []byte, len *int) {
+		var err error = nil
+		n := 0
+
+		for {
+			n, err = reader.Read(buf[*len:])
+			*len += n
+			if err == io.EOF {
+				break
+			}
+		}
+		ch <- err
+	}
+
+	go reader(in, buf, &bLen)
+	go reader(errPipe, errBuf, &errLen)
+
+	select {
+	case <-ch:
+		break
+	case <-time.After(timeout):
+		status = StatusTimeout
+		cmd.Process.Kill()
+	}
+
+	if bLen >= bufSize || errLen >= bufSize {
+		status = StatusBufOverflow
+	}
+
+	return Result{Status: status, Stdout: string(buf[:bLen]), Stderr: string(errBuf[:errLen])}
+}
+
 // initialize the interactive interpreter
 func initUser() (User, error) {
 	cmd := exec.Command("java", "-jar", "raven.jar")
@@ -175,7 +269,7 @@ func initUser() (User, error) {
 		return User{}, err
 	}
 
-	nbReader := nbreader.NewNBReader(in, 2048, nbreader.ChunkTimeout(time.Millisecond*250))
+	nbReader := nbreader.NewNBReader(in, 2048, nbreader.Timeout(time.Millisecond*250))
 
 	return User{process: cmd, start: time.Now(), out: out, in: nbReader}, nil
 }
@@ -193,11 +287,12 @@ type Line struct {
 
 type Result struct {
 	Status int    `json:"status"`
-	Result string `json:"result"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
 }
 
 type Program struct {
-	Src   string   `json:"src"`
-	Args  []string `json:"args"`
-	Input string   `json:"stdin"`
+	Src   string `json:"src"`
+	Args  string `json:"args"`
+	Input string `json:"stdin"`
 }
