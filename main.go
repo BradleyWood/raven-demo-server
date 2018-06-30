@@ -96,7 +96,14 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 // Reset the interactive interpreter
 func ResetIaHandler(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer)
-
+	session, _ := store.Get(request, "cookie-name")
+	if session.Values["userId"] == nil {
+		id := session.Values["userId"].(int)
+		users[id].process.Process.Kill()
+		delete(users, id)
+		session.Values["userId"] = nil
+		session.Save(request, writer)
+	}
 }
 
 // Exec a line of code for the interactive interpreter and return the result
