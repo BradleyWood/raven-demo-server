@@ -33,6 +33,7 @@ const (
 	StatusOk          = 0
 	StatusTimeout     = 1
 	StatusBufOverflow = 2
+	bufSize           = 2048
 	host              = "http://bradleywood.me"
 	timeout           = time.Second * 5
 	iaTimeoutMins     = 20
@@ -230,7 +231,7 @@ func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
 }
 
 func readString(reader io.Reader) string {
-	bytes := make([]byte, 2048)
+	bytes := make([]byte, bufSize)
 	n, _ := reader.Read(bytes)
 
 	return string(bytes[:n])
@@ -246,7 +247,6 @@ func execProgram(path string, program Program) Result {
 	}
 
 	status := StatusOk
-	bufSize := 4096
 
 	errPipe, _ := cmd.StderrPipe()
 	in, _ := cmd.StdoutPipe()
@@ -307,8 +307,8 @@ func initUser() (User, error) {
 		return User{}, err
 	}
 
-	nbReader := nbreader.NewNBReader(in, 2048, nbreader.Timeout(time.Millisecond*250))
-	nbErrorReader := nbreader.NewNBReader(errPipe, 2048, nbreader.Timeout(time.Millisecond*50))
+	nbReader := nbreader.NewNBReader(in, bufSize, nbreader.Timeout(time.Millisecond*250))
+	nbErrorReader := nbreader.NewNBReader(errPipe, bufSize, nbreader.Timeout(time.Millisecond*50))
 
 	return User{process: cmd, start: time.Now(), out: out, in: nbReader, err: nbErrorReader}, nil
 }
