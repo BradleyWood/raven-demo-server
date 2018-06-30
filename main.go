@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
+	"github.com/svent/go-nbreader"
 	"github.com/gorilla/securecookie"
 )
 
@@ -25,6 +26,7 @@ func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/exec", IaHandler).Methods("POST")
 	r.HandleFunc("/reset", ResetIaHandler).Methods("POST")
+	r.HandleFunc("/update", TerminalUpdate).Methods("POST")
 	r.HandleFunc("/program", ExecProgramHandler).Methods("POST")
 
 	store.Options = &sessions.Options{
@@ -103,6 +105,31 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 	session.Save(request, writer)
 }
 
+// report output from the terminal
+func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
+	_, user, err := getUser(writer, request)
+
+	if err == nil {
+		output := readString(user.in)
+
+		response := Result{Result: output}
+		bytes, err := json.Marshal(response)
+
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+		} else {
+			writer.Write(bytes)
+		}
+	}
+}
+
+func readString(reader io.Reader) string {
+	bytes := make([]byte, 2048)
+	n, _ := reader.Read(bytes)
+
+	return string(bytes[:n])
+}
+
 // initialize the interactive interpreter
 func initUser() (User, error) {
 	cmd := exec.Command("java", "-jar", "raven.jar")
@@ -114,13 +141,15 @@ func initUser() (User, error) {
 		return User{}, err
 	}
 
-	return User{process: cmd, out: out, in: in}, nil
+	nbReader := nbreader.NewNBReader(in, 2048, nbreader.ChunkTimeout(time.Millisecond* 250))
+
+	return User{process: cmd, out: out, in: nbReader}, nil
 }
 
 type User struct {
 	process *exec.Cmd
-	out     io.WriteCloser
-	in      io.ReadCloser
+	out     io.Writer
+	in      io.Reader
 }
 
 type Line struct {
