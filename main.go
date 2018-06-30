@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"log"
+	"fmt"
 	"time"
 	"errors"
 	"strings"
@@ -19,6 +20,7 @@ import (
 var (
 	counter = 0
 	users   = make(map[int]User)
+	host    = "http://bradleywood.me"
 	store   = sessions.NewCookieStore(securecookie.GenerateRandomKey(16))
 )
 
@@ -29,6 +31,11 @@ func main() {
 	r.HandleFunc("/update", TerminalUpdate).Methods("POST")
 	r.HandleFunc("/program", ExecProgramHandler).Methods("POST")
 
+	r.HandleFunc("/exec", HandleOptions).Methods("OPTIONS")
+	r.HandleFunc("/reset", HandleOptions).Methods("OPTIONS")
+	r.HandleFunc("/update", HandleOptions).Methods("OPTIONS")
+	r.HandleFunc("/program", HandleOptions).Methods("OPTIONS")
+
 	store.Options = &sessions.Options{
 		MaxAge:   60 * 60,
 		HttpOnly: true,
@@ -36,12 +43,24 @@ func main() {
 
 	srv := &http.Server{
 		Handler:      r,
-		Addr:         "127.0.0.1:8000",
+		Addr:         "127.0.0.1:3000",
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
 
 	log.Fatal(srv.ListenAndServe())
+}
+
+func HandleOptions(writer http.ResponseWriter, _ *http.Request) {
+	setHeaders(writer)
+	writer.Header().Set("Access-Control-Allow-Methods", "OPTIONS")
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+}
+
+func setHeaders(writer http.ResponseWriter) {
+	writer.Header().Set("Access-Control-Allow-Credentials", "true")
+	writer.Header().Set("Access-Control-Allow-Origin", host)
+	writer.Header().Set("Content-Type", "application/json; charset=UTF-8")
 }
 
 func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Session, User, error) {
@@ -69,13 +88,13 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 
 // Reset the interactive interpreter
 func ResetIaHandler(writer http.ResponseWriter, request *http.Request) {
-	session, _ := store.Get(request, "cookie-name")
+	setHeaders(writer)
 
-	session.Save(request, writer)
 }
 
 // Exec a line of code for the interactive interpreter and return the result
 func IaHandler(writer http.ResponseWriter, request *http.Request) {
+	setHeaders(writer)
 	_, user, err := getUser(writer, request)
 
 	if err == nil {
@@ -100,19 +119,20 @@ func IaHandler(writer http.ResponseWriter, request *http.Request) {
 
 // Execute a demo program
 func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
-	session, _ := store.Get(request, "cookie-name")
+	setHeaders(writer)
 
-	session.Save(request, writer)
 }
 
 // report output from the terminal
 func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
-	_, user, err := getUser(writer, request)
+	setHeaders(writer)
+	s, user, err := getUser(writer, request)
 
 	if err == nil {
 		output := readString(user.in)
 
 		response := Result{Result: output}
+		fmt.Println("Update", output, s.Values["userId"])
 		bytes, err := json.Marshal(response)
 
 		if err != nil {
@@ -141,7 +161,7 @@ func initUser() (User, error) {
 		return User{}, err
 	}
 
-	nbReader := nbreader.NewNBReader(in, 2048, nbreader.ChunkTimeout(time.Millisecond* 250))
+	nbReader := nbreader.NewNBReader(in, 2048, nbreader.ChunkTimeout(time.Millisecond*250))
 
 	return User{process: cmd, out: out, in: nbReader}, nil
 }
