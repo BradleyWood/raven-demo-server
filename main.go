@@ -5,6 +5,7 @@ import (
 	"os"
 	"log"
 	"path"
+	"sync"
 	"time"
 	"regexp"
 	"errors"
@@ -23,6 +24,7 @@ import (
 var (
 	counter  = 0
 	users    = make(map[int]User)
+	userMut  = &sync.Mutex{}
 	store    = sessions.NewCookieStore(securecookie.GenerateRandomKey(16))
 	argRegex = regexp.MustCompile(`[^\s"']+|"([^"]*)"|'([^']*)`)
 )
@@ -33,6 +35,7 @@ const (
 	StatusBufOverflow = 2
 	host              = "http://bradleywood.me"
 	timeout           = time.Second * 5
+	iaTimeoutMins     = 20
 )
 
 func main() {
@@ -62,16 +65,24 @@ func main() {
 		ReadTimeout:  15 * time.Second,
 	}
 
+	go destroyOldInterpreters()
+
 	log.Fatal(srv.ListenAndServe())
+}
 
-	for k, v := range users {
-		if time.Since(v.start).Hours() >= 1 {
-			v.process.Process.Kill()
-			delete(users, k)
+func destroyOldInterpreters() {
+	for true {
+		time.Sleep(10 * time.Second)
+		userMut.Lock()
+
+		for k, v := range users {
+			if time.Since(v.start).Minutes() >= iaTimeoutMins {
+				v.process.Process.Kill()
+				delete(users, k)
+			}
 		}
+		userMut.Unlock()
 	}
-
-	os.RemoveAll(tmpDir)
 }
 
 func HandleOptions(writer http.ResponseWriter, _ *http.Request) {
@@ -87,23 +98,31 @@ func setHeaders(writer http.ResponseWriter) {
 }
 
 func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Session, User, error) {
-	session, _ := store.Get(request, "cookie-name")
+	session, _ := store.Get(request, "raven")
 
 	if session.Values["userId"] == nil {
+		session.Values["userId"] = counter
+		session.Save(request, writer)
 		user, err := initUser()
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
 		} else {
-			session.Values["userId"] = counter
 			users[counter] = user
-			session.Save(request, writer)
 			counter++
 		}
 	}
 
-	if session.Values["userId"] != nil {
-		user := users[session.Values["userId"].(int)]
+	id := session.Values["userId"].(int)
+	if user, err := users[id]; err {
 		return session, user, nil
+	} else {
+		user, err := initUser()
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusInternalServerError)
+		} else {
+			users[id] = user
+			return session, user, nil
+		}
 	}
 
 	return session, User{}, errors.New("cannot create interactive interpreter")
@@ -112,7 +131,8 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 // Reset the interactive interpreter
 func ResetIaHandler(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer)
-	session, _ := store.Get(request, "cookie-name")
+	userMut.Lock()
+	session, _ := store.Get(request, "raven")
 	if session.Values["userId"] == nil {
 		id := session.Values["userId"].(int)
 		users[id].process.Process.Kill()
@@ -120,11 +140,13 @@ func ResetIaHandler(writer http.ResponseWriter, request *http.Request) {
 		session.Values["userId"] = nil
 		session.Save(request, writer)
 	}
+	userMut.Unlock()
 }
 
 // Exec a line of code for the interactive interpreter and return the result
 func IaHandler(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer)
+	userMut.Lock()
 	_, user, err := getUser(writer, request)
 
 	if err == nil {
@@ -145,6 +167,7 @@ func IaHandler(writer http.ResponseWriter, request *http.Request) {
 			}
 		}
 	}
+	userMut.Unlock()
 }
 
 // Execute a demo program
@@ -187,6 +210,7 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 // report output from the terminal
 func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
 	setHeaders(writer)
+	userMut.Lock()
 	_, user, err := getUser(writer, request)
 
 	if err == nil {
@@ -202,6 +226,7 @@ func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
 			writer.Write(bytes)
 		}
 	}
+	userMut.Unlock()
 }
 
 func readString(reader io.Reader) string {
