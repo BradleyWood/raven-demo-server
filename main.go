@@ -6,6 +6,7 @@ import (
 	"log"
 	"path"
 	"time"
+	"regexp"
 	"errors"
 	"strings"
 	"os/exec"
@@ -17,7 +18,6 @@ import (
 	"github.com/tink-ab/tempfile"
 	"github.com/svent/go-nbreader"
 	"github.com/gorilla/securecookie"
-	"regexp"
 )
 
 var (
@@ -32,7 +32,7 @@ const (
 	StatusTimeout     = 1
 	StatusBufOverflow = 2
 	host              = "http://bradleywood.me"
-	timeout           = time.Second * 20
+	timeout           = time.Second * 5
 )
 
 func main() {
@@ -224,6 +224,7 @@ func execProgram(path string, program Program) Result {
 
 	errPipe, _ := cmd.StderrPipe()
 	in, _ := cmd.StdoutPipe()
+	out, _ := cmd.StdinPipe()
 
 	cmd.Start()
 
@@ -249,6 +250,7 @@ func execProgram(path string, program Program) Result {
 		ch <- err
 	}
 
+	go out.Write([]byte(program.Input))
 	go reader(in, buf, &bLen)
 	go reader(errPipe, errBuf, &errLen)
 
