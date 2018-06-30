@@ -17,12 +17,14 @@ import (
 	"github.com/tink-ab/tempfile"
 	"github.com/svent/go-nbreader"
 	"github.com/gorilla/securecookie"
+	"regexp"
 )
 
 var (
-	counter = 0
-	users   = make(map[int]User)
-	store   = sessions.NewCookieStore(securecookie.GenerateRandomKey(16))
+	counter  = 0
+	users    = make(map[int]User)
+	store    = sessions.NewCookieStore(securecookie.GenerateRandomKey(16))
+	argRegex = regexp.MustCompile(`[^\s"']+|"([^"]*)"|'([^']*)`)
 )
 
 const (
@@ -210,6 +212,13 @@ func readString(reader io.Reader) string {
 
 func execProgram(path string, program Program) Result {
 	cmd := exec.Command("java", "-jar", "raven.jar", path)
+
+	args := argRegex.FindAllString(program.Args, -1)
+
+	for i := range args {
+		cmd.Args = append(cmd.Args, args[i])
+	}
+
 	status := StatusOk
 	bufSize := 4096
 
