@@ -23,7 +23,7 @@ import (
 
 var (
 	counter  = 0
-	users    = make(map[int]User)
+	users    = make(map[int]*User)
 	userMut  = &sync.Mutex{}
 	store    = sessions.NewCookieStore(securecookie.GenerateRandomKey(16))
 	argRegex = regexp.MustCompile(`[^\s"']+|"([^"]*)"|'([^']*)`)
@@ -61,7 +61,7 @@ func main() {
 
 	srv := &http.Server{
 		Handler:      r,
-		Addr:         "127.0.0.1:3000",
+		Addr:         ":3000",
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
@@ -77,7 +77,7 @@ func destroyOldInterpreters() {
 		userMut.Lock()
 
 		for k, v := range users {
-			if time.Since(v.start).Minutes() >= iaTimeoutMins {
+			if time.Since(v.lastLogin).Minutes() >= iaTimeoutMins {
 				v.process.Process.Kill()
 				delete(users, k)
 			}
@@ -98,7 +98,7 @@ func setHeaders(writer http.ResponseWriter) {
 	writer.Header().Set("Content-Type", "application/json; charset=UTF-8")
 }
 
-func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Session, User, error) {
+func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Session, *User, error) {
 	session, _ := store.Get(request, "raven")
 
 	if session.Values["userId"] == nil {
@@ -115,6 +115,7 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 
 	id := session.Values["userId"].(int)
 	if user, err := users[id]; err {
+		user.lastLogin = time.Now()
 		return session, user, nil
 	} else {
 		user, err := initUser()
@@ -126,7 +127,7 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 		}
 	}
 
-	return session, User{}, errors.New("cannot create interactive interpreter")
+	return session, &User{}, errors.New("cannot create interactive interpreter")
 }
 
 // Reset the interactive interpreter
@@ -296,7 +297,7 @@ func execProgram(path string, program Program) Result {
 }
 
 // initialize the interactive interpreter
-func initUser() (User, error) {
+func initUser() (*User, error) {
 	cmd := exec.Command("java", "-jar", "raven.jar")
 	in, _ := cmd.StdoutPipe()
 	out, _ := cmd.StdinPipe()
@@ -304,21 +305,21 @@ func initUser() (User, error) {
 	err := cmd.Start()
 
 	if err != nil {
-		return User{}, err
+		return &User{}, err
 	}
 
 	nbReader := nbreader.NewNBReader(in, bufSize, nbreader.Timeout(time.Millisecond*250))
 	nbErrorReader := nbreader.NewNBReader(errPipe, bufSize, nbreader.Timeout(time.Millisecond*50))
 
-	return User{process: cmd, start: time.Now(), out: out, in: nbReader, err: nbErrorReader}, nil
+	return &User{process: cmd, lastLogin: time.Now(), out: out, in: nbReader, err: nbErrorReader}, nil
 }
 
 type User struct {
-	process *exec.Cmd
-	start   time.Time
-	out     io.Writer
-	in      io.Reader
-	err     io.Reader
+	process   *exec.Cmd
+	lastLogin time.Time
+	out       io.Writer
+	in        io.Reader
+	err       io.Reader
 }
 
 type Line struct {
