@@ -72,7 +72,7 @@ func main() {
 }
 
 func destroyOldInterpreters() {
-	for true {
+	for {
 		time.Sleep(10 * time.Second)
 		userMut.Lock()
 
@@ -159,7 +159,6 @@ func IaHandler(writer http.ResponseWriter, request *http.Request) {
 			parseError := json.Unmarshal(body, line)
 
 			if parseError != nil {
-				panic(parseError)
 				http.Error(writer, parseError.Error(), http.StatusBadRequest)
 			} else {
 				user.out.Write([]byte(line.Line))
@@ -179,7 +178,6 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 	fp, err := tempfile.TempFile(path.Join(os.TempDir(), "raven"), "raven_demo_", ".rvn")
 
 	if err != nil {
-		panic(err)
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 	} else {
 		body, err := ioutil.ReadAll(request.Body)
@@ -188,7 +186,6 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 			program := Program{}
 			err := json.Unmarshal(body, &program)
 			if err != nil {
-				panic(err)
 				http.Error(writer, err.Error(), http.StatusBadRequest)
 			} else {
 				fp.Write([]byte(program.Src))
