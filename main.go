@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"os"
+	"fmt"
 	"log"
 	"path"
 	"sync"
@@ -58,6 +59,7 @@ func main() {
 
 	tmpDir := path.Join(os.TempDir(), "raven")
 	os.Mkdir(tmpDir, os.ModePerm)
+	os.Mkdir("logs/", os.ModePerm)
 
 	srv := &http.Server{
 		Handler:      r,
@@ -104,6 +106,12 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 	if session.Values["userId"] == nil {
 		session.Values["userId"] = counter
 		session.Save(request, writer)
+
+		writeLog(request.RemoteAddr, map[string]interface{}{
+			"Time":   time.Now(),
+			"Action": "Connected",
+		})
+
 		user, err := initUser()
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusInternalServerError)
@@ -128,6 +136,33 @@ func getUser(writer http.ResponseWriter, request *http.Request) (*sessions.Sessi
 	}
 
 	return session, &User{}, errors.New("cannot create interactive interpreter")
+}
+
+func writeLog(address string, v interface{}) {
+	n := strings.LastIndex(address, ":")
+	if n < 0 {
+		n = len(address)
+	}
+	sanitizedAddr := address[:n]
+
+	sanitizedAddr = strings.Replace(sanitizedAddr, ".", "_", -1)
+	sanitizedAddr = strings.Replace(sanitizedAddr, ":", "_", -1)
+
+	logPath := "logs/" + sanitizedAddr + ".txt"
+
+	file, err := os.OpenFile(logPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
+	defer file.Close()
+
+	if err == nil {
+		bytes, err := json.MarshalIndent(v, "", "    ")
+		if err == nil {
+			fmt.Fprintln(file, string(bytes))
+		} else {
+			panic(err)
+		}
+	} else {
+		panic(err)
+	}
 }
 
 // Reset the interactive interpreter
@@ -165,6 +200,7 @@ func IaHandler(writer http.ResponseWriter, request *http.Request) {
 				if !strings.HasSuffix(line.Line, "\n") {
 					user.out.Write([]byte("\n"))
 				}
+				writeLog(request.RemoteAddr, map[string]interface{}{"Time": time.Now(), "Src": line.Line})
 			}
 		}
 	}
@@ -200,6 +236,12 @@ func ExecProgramHandler(writer http.ResponseWriter, request *http.Request) {
 				} else {
 					writer.Write(output)
 				}
+
+				requestLog := map[string]interface{}{
+					"Time":  time.Now(), "Status": result.Status, "Src": program.Src,
+					"Stdin": program.Input, "Stdout": result.Stdout, "Stderr": result.Stderr,
+				}
+				writeLog(request.RemoteAddr, requestLog)
 			}
 		}
 	}
@@ -224,6 +266,12 @@ func TerminalUpdate(writer http.ResponseWriter, request *http.Request) {
 		} else {
 			writer.Write(bytes)
 		}
+
+		writeLog(request.RemoteAddr, map[string]interface{}{
+			"Time":   time.Now(),
+			"Stdout": output,
+			"Stderr": errorOutput,
+		})
 	}
 	userMut.Unlock()
 }
